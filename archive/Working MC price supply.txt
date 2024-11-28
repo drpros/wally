@@ -1,0 +1,129 @@
+from flask import Flask, render_template_string
+import requests
+
+app = Flask(__name__)
+
+# API configurations
+ETHERSCAN_API_KEY = "G9Y9C9HZCJ754GF3CH3U9UIT5J5UF1983M"
+TOKEN_CONTRACT_ADDRESS = "0x584a4Dd38d28fD1EA0E147bA7B70AEd29A37e335"  # Change as needed
+TOKEN_DECIMALS = 18
+ETHERSCAN_URL = "https://api.etherscan.io/api"
+DEXSCREENER_URL = "https://api.dexscreener.com/latest/dex/tokens"
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Token Info</title>
+</head>
+<body>
+    <h1>Token Information</h1>
+    <table border="1">
+        <tr>
+            <th>Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Total Supply</td>
+            <td>{{ data.total_supply }}</td>
+        </tr>
+        <tr>
+            <td>Token Name</td>
+            <td>{{ data.token_name }}</td>
+        </tr>
+        <tr>
+            <td>Price (USD)</td>
+            <td>{{ data.price_usd }}</td>
+        </tr>
+        <tr>
+            <td>Market Cap (USD)</td>
+            <td>{{ data.market_cap }}</td>
+        </tr>
+    </table>
+</body>
+</html>
+"""
+
+def fetch_total_supply():
+    """Fetch total supply of the token using Etherscan tokensupply endpoint."""
+    try:
+        print("Fetching total supply from Etherscan...")
+        params = {
+            "module": "stats",
+            "action": "tokensupply",
+            "contractaddress": TOKEN_CONTRACT_ADDRESS,
+            "apikey": ETHERSCAN_API_KEY,
+        }
+        response = requests.get(ETHERSCAN_URL, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        if data["status"] == "1":
+            total_supply = int(data["result"]) / (10 ** TOKEN_DECIMALS)
+            print(f"Total Supply: {total_supply}")
+            return f"{total_supply:,.2f}"
+        else:
+            print(f"Etherscan Error (tokensupply): {data['message']}")
+            return "N/A"
+    except Exception as e:
+        print(f"Error fetching total supply: {e}")
+        return "N/A"
+
+def fetch_dexscreener_metadata():
+    """Fetch token name, price, and market cap from DexScreener."""
+    try:
+        print("Fetching token metadata from DexScreener...")
+        url = f"{DEXSCREENER_URL}/{TOKEN_CONTRACT_ADDRESS}"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if "pairs" in data and data["pairs"]:
+            pair_data = data["pairs"][0]
+            token_name = pair_data.get("baseToken", {}).get("name", "Unknown")
+            price_usd = float(pair_data.get("priceUsd", 0))
+            market_cap = pair_data.get("fdv", None)  # Fully Diluted Valuation or Market Cap
+
+            print(f"Token Name: {token_name}, Price (USD): {price_usd}, Market Cap: {market_cap}")
+            return {
+                "token_name": token_name,
+                "price_usd": price_usd,
+                "market_cap": market_cap,
+            }
+        else:
+            print("No pairs found in DexScreener response.")
+            return {
+                "token_name": "Unknown",
+                "price_usd": None,
+                "market_cap": None,
+            }
+    except Exception as e:
+        print(f"Error fetching metadata from DexScreener: {e}")
+        return {
+            "token_name": "Unknown",
+            "price_usd": None,
+            "market_cap": None,
+        }
+
+@app.route("/")
+def index():
+    total_supply = fetch_total_supply()
+    dexscreener_data = fetch_dexscreener_metadata()
+
+    # Format price correctly, even for very small values
+    price_usd = dexscreener_data["price_usd"]
+    price_usd_display = (
+        f"${price_usd:,.8f}" if price_usd and price_usd < 0.0001 else f"${price_usd:,.6f}" if price_usd else "N/A"
+    )
+
+    data = {
+        "total_supply": total_supply,
+        "token_name": dexscreener_data["token_name"],
+        "price_usd": price_usd_display,
+        "market_cap": f"${dexscreener_data['market_cap']:,.2f}" if dexscreener_data["market_cap"] is not None else "N/A",
+    }
+
+    return render_template_string(HTML_TEMPLATE, data=data)
+
+if __name__ == "__main__":
+    app.run(debug=True)
